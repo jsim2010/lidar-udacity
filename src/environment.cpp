@@ -42,13 +42,56 @@ void simpleHighway(pcl::visualization::PCLVisualizer::Ptr& viewer)
     // ----------------------------------------------------
     
     // RENDER OPTIONS
-    bool renderScene = true;
+    bool renderScene = false;
     std::vector<Car> cars = initHighway(renderScene, viewer);
     
-    // TODO:: Create lidar sensor 
+    // Create lidar sensor 
+    Lidar* lidar = new Lidar(cars, 0.0);
 
-    // TODO:: Create point processor
-  
+    pcl::PointCloud<pcl::PointXYZ>::Ptr point_cloud = lidar->scan();
+    //renderPointCloud(viewer, point_cloud, "point cloud");
+
+    // Create point processor
+    ProcessPointClouds<pcl::PointXYZ> processor;
+    std::pair<pcl::PointCloud<pcl::PointXYZ>::Ptr, pcl::PointCloud<pcl::PointXYZ>::Ptr> segments = processor.SegmentPlane(point_cloud, 100, 0.2);
+    renderPointCloud(viewer, segments.first, "obstacle cloud", Color(1, 0, 0));
+    renderPointCloud(viewer, segments.second, "plane cloud", Color(0, 1, 0));
+
+    std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> clusters = processor.Clustering(segments.first, 1.0, 3, 30);
+
+    int clusterId = 0;
+    std::vector<Color> colors = {Color(1, 0, 0), Color(1, 1, 0), Color(0, 0, 1)};
+
+    for (pcl::PointCloud<pcl::PointXYZ>::Ptr cluster : clusters) {
+        std::cout << "cluster size: ";
+        processor.numPoints(cluster);
+        renderPointCloud(viewer, cluster, "obstacle cloud" + std::to_string(clusterId), colors[clusterId]);
+        Box box = processor.BoundingBox(cluster);
+        renderBox(viewer, box, clusterId);
+        ++clusterId;
+    }
+}
+
+void cityBlock(pcl::visualization::PCLVisualizer::Ptr& viewer, ProcessPointClouds<pcl::PointXYZI>* point_processor, const pcl::PointCloud<pcl::PointXYZI>::Ptr& input_cloud) {
+    pcl::PointCloud<pcl::PointXYZI>::Ptr filter_cloud = point_processor->FilterCloud(input_cloud, 0.2, Eigen::Vector4f(-10, -5, -3, 1), Eigen::Vector4f(30, 7.5, 1, 1));
+
+    std::pair<pcl::PointCloud<pcl::PointXYZI>::Ptr, pcl::PointCloud<pcl::PointXYZI>::Ptr> segments = point_processor->SegmentPlane(filter_cloud, 100, 0.2);
+    //renderPointCloud(viewer, segments.first, "obstacle cloud", Color(1, 0, 1));
+    renderPointCloud(viewer, segments.second, "plane cloud", Color(0, 1, 0));
+
+    std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> clusters = point_processor->Clustering(segments.first, 0.3, 10, 500);
+
+    int clusterId = 0;
+    std::vector<Color> colors = {Color(1, 0, 0), Color(1, 1, 0), Color(0, 0, 1)};
+
+    for (pcl::PointCloud<pcl::PointXYZI>::Ptr cluster : clusters) {
+        //std::cout << "cluster size: ";
+        //point_processor->numPoints(cluster);
+        renderPointCloud(viewer, cluster, "obstacle cloud" + std::to_string(clusterId), colors[clusterId % 3]);
+        Box box = point_processor->BoundingBox(cluster);
+        renderBox(viewer, box, clusterId);
+        ++clusterId;
+    }
 }
 
 
@@ -81,12 +124,29 @@ int main (int argc, char** argv)
     std::cout << "starting enviroment" << std::endl;
 
     pcl::visualization::PCLVisualizer::Ptr viewer (new pcl::visualization::PCLVisualizer ("3D Viewer"));
-    CameraAngle setAngle = XY;
+    CameraAngle setAngle = FPS;
     initCamera(setAngle, viewer);
-    simpleHighway(viewer);
+    //simpleHighway(viewer);
+    ProcessPointClouds<pcl::PointXYZI>* point_processor = new ProcessPointClouds<pcl::PointXYZI>();
+    std::vector<boost::filesystem::path> stream = point_processor->streamPcd("../src/sensors/data/pcd/data_1");
+    auto streamIterator = stream.begin();
+    pcl::PointCloud<pcl::PointXYZI>::Ptr input_cloud;
 
-    while (!viewer->wasStopped ())
-    {
+    while(!viewer->wasStopped()) {
+        // Clear viewer
+        viewer->removeAllPointClouds();
+        viewer->removeAllShapes();
+
+        // Load pcd and run obstacle detection process
+        input_cloud = point_processor->loadPcd((*streamIterator).string());
+        cityBlock(viewer, point_processor, input_cloud);
+
+        streamIterator++;
+        
+        if (streamIterator == stream.end()) {
+            streamIterator = stream.begin();
+        }
+
         viewer->spinOnce ();
     } 
 }
